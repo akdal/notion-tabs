@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Foundation
 import SwiftUI
 
@@ -33,11 +34,13 @@ final class AppViewModel: ObservableObject {
     @Published var searchQuery: String = ""
     @Published var autoRefreshEnabled = false
     @Published var actionHistory: [ActionLog] = []
+    @Published var appStatus = AppStatus()
 
     private let client = NotionTabsCLIClient()
     private var autoRefreshTask: Task<Void, Never>?
 
     func refresh() {
+        updateRuntimeStatus()
         isLoading = true
         Task { [weak self] in
             guard let self else { return }
@@ -61,6 +64,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func focusWindow(index: Int) {
+        updateRuntimeStatus()
         isLoading = true
         Task { [weak self] in
             guard let self else { return }
@@ -89,6 +93,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func focusTab(window: Int, tab: Int) {
+        updateRuntimeStatus()
         isLoading = true
         Task { [weak self] in
             guard let self else { return }
@@ -134,6 +139,20 @@ final class AppViewModel: ObservableObject {
         autoRefreshTask?.cancel()
         autoRefreshTask = nil
         autoRefreshEnabled = false
+    }
+
+    func requestAccessibilityPermission() {
+        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        updateRuntimeStatus()
+    }
+
+    func updateRuntimeStatus() {
+        appStatus = AppStatus(
+            notionRunning: !NSRunningApplication.runningApplications(withBundleIdentifier: "notion.id").isEmpty,
+            accessibilityTrusted: AXIsProcessTrusted(),
+            cliPath: client.availableBinaryPath()
+        )
     }
 
     private func reloadListOnly() async throws {
@@ -188,6 +207,10 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                 Button("Refresh") { viewModel.refresh() }
                     .disabled(viewModel.isLoading)
+            }
+
+            StatusBar(status: viewModel.appStatus) {
+                viewModel.requestAccessibilityPermission()
             }
 
             HStack {
@@ -262,8 +285,32 @@ struct ContentView: View {
             }
         }
         .padding(14)
-        .onAppear { viewModel.refresh() }
+        .onAppear {
+            viewModel.updateRuntimeStatus()
+            viewModel.refresh()
+        }
         .onDisappear { viewModel.stopAutoRefresh() }
+    }
+}
+
+struct StatusBar: View {
+    let status: AppStatus
+    let requestAccessibility: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Label(status.notionRunning ? "Notion Running" : "Notion Not Running", systemImage: status.notionRunning ? "checkmark.circle" : "xmark.circle")
+                .foregroundStyle(status.notionRunning ? .green : .red)
+            Label(status.accessibilityTrusted ? "Accessibility Granted" : "Accessibility Required", systemImage: status.accessibilityTrusted ? "checkmark.circle" : "exclamationmark.triangle")
+                .foregroundStyle(status.accessibilityTrusted ? .green : .orange)
+            Label(status.cliPath == nil ? "CLI Missing" : "CLI Ready", systemImage: status.cliPath == nil ? "xmark.circle" : "checkmark.circle")
+                .foregroundStyle(status.cliPath == nil ? .red : .green)
+            Spacer()
+            if !status.accessibilityTrusted {
+                Button("Grant Accessibility", action: requestAccessibility)
+            }
+        }
+        .font(.caption)
     }
 }
 
@@ -290,8 +337,13 @@ struct MenuBarMenuContent: View {
 
     var body: some View {
         Group {
+            Text(viewModel.appStatus.menuSummary)
+            Divider()
             Button("Refresh") { viewModel.refresh() }
             Button("Open Main Window") { onOpenMainWindow() }
+            if !viewModel.appStatus.accessibilityTrusted {
+                Button("Grant Accessibility") { viewModel.requestAccessibilityPermission() }
+            }
             Toggle("Auto Refresh (2s)", isOn: Binding(
                 get: { viewModel.autoRefreshEnabled },
                 set: { viewModel.setAutoRefresh(enabled: $0) }
@@ -316,6 +368,7 @@ struct MenuBarMenuContent: View {
             Button("Quit") { NSApp.terminate(nil) }
         }
         .onAppear {
+            viewModel.updateRuntimeStatus()
             if viewModel.windows.isEmpty {
                 viewModel.refresh()
             }
@@ -335,6 +388,19 @@ struct ActionLog: Identifiable {
     let action: String
     let strategy: String
     let message: String
+}
+
+struct AppStatus {
+    var notionRunning = false
+    var accessibilityTrusted = false
+    var cliPath: String?
+
+    var menuSummary: String {
+        let notion = notionRunning ? "Notion: Running" : "Notion: Not Running"
+        let accessibility = accessibilityTrusted ? "AX: Granted" : "AX: Required"
+        let cli = cliPath == nil ? "CLI: Missing" : "CLI: Ready"
+        return "\(notion) / \(accessibility) / \(cli)"
+    }
 }
 
 struct UIWindowSnapshot: Identifiable, Decodable {
@@ -448,6 +514,10 @@ struct NotionTabsCLIClient {
                 continuation.resume(returning: (merged, text, p.terminationStatus))
             }
         }
+    }
+
+    func availableBinaryPath() -> String? {
+        binaryPath()
     }
 
     private func binaryPath() -> String? {

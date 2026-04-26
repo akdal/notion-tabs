@@ -43,6 +43,7 @@ The UI provides:
 - macOS menu bar entry using the default system menu style
 - window and tab list under the menu bar item
 - main window with search, auto-refresh, recent actions, and raw JSON debug output
+- runtime status for Notion, Accessibility permission, and CLI availability
 - actions backed by `notion-tabs --json`
 
 For packaged or non-SwiftPM execution, set `NOTION_TABS_BIN` to the `notion-tabs` binary path:
