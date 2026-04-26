@@ -1,39 +1,83 @@
-# notion-tabs-poc
+# notion-tabs
 
-PoC CLI for validating Notion desktop tab introspection and activation on macOS.
+Notion Desktop tab/window control CLI for macOS.
 
-## Commands
+Current product entrypoint is `notion-tabs` (`NotionTabsCore` + CLI).
+
+## Requirements
+
+- macOS (tested on Apple Silicon)
+- Notion Desktop app running (`bundle id: notion.id`)
+- Accessibility permission granted to terminal app
+
+## Build
 
 ```bash
-swift run notion-tabs-poc status --prompt
-swift run notion-tabs-poc list
-swift run notion-tabs-poc persisted-list
-swift run notion-tabs-poc persisted-watch --interval-ms 500
-swift run notion-tabs-poc dump --depth 7
-swift run notion-tabs-poc activate --window 1 --tab 2
-swift run notion-tabs-poc activate-window-persisted --window 1 --pause-ms 700 --strategy menu-only
-swift run notion-tabs-poc activate-window-persisted --window 1 --pause-ms 700 --strategy app-first
-swift run notion-tabs-poc activate-persisted --window 1 --tab 4 --pause-ms 700 --strategy menu-only
-swift run notion-tabs-poc activate-persisted --window 1 --tab 4 --pause-ms 700 --strategy app-first
-swift run notion-tabs-poc probe --window 1
-swift run notion-tabs-poc verify --window 1 --range 1-12 --pause-ms 350
-swift run notion-tabs-poc verify-list --repeats 2 --pause-ms 500
-swift run notion-tabs-poc window-sources
-swift run notion-tabs-poc menu-tabs
+swift build
 ```
 
-## Notes
+## Product CLI
 
-- Requires macOS Accessibility permission.
-- Notion app must be running locally.
-- This repository currently focuses on feasibility for window/tab extraction and activation.
-- `persisted-list` reads Notion's passive `state.json` snapshot for full window/tab state.
-- `persisted-watch` polls `state.json` and prints a new snapshot whenever the persisted window/tab state changes.
-- `activate-window-persisted` tests window activation only, using persisted snapshot indices.
-- `activate-persisted` tests window activation and then tab activation, using persisted snapshot indices.
-- `--strategy menu-only` is the current baseline.
-- `--strategy app-first` first asks macOS to activate Notion via `NSRunningApplication.activate(options: [.activateAllWindows])`, then selects the target from Notion's `Window` menu.
-- Tab activation now tries `AXScrollToVisible` before `AXPress`, with a coordinate-click fallback when AX confirmation does not arrive.
-- `--pause-ms` is now used as a per-step timeout budget for state-based polling rather than a fixed sleep between every step.
-- `verify-list` traverses Notion's `Window` menu to validate per-window tab list reading when `AXWindows` only exposes the focused window.
-- `window-sources` compares Accessibility, the `Window` menu, Quartz Window Services, and ScreenCaptureKit for cross-Space window discovery.
+```bash
+swift run notion-tabs list
+swift run notion-tabs focus-window --window 2
+swift run notion-tabs focus-tab --window 2 --tab 8
+```
+
+JSON mode (for UI/automation):
+
+```bash
+swift run notion-tabs list --json
+swift run notion-tabs focus-window --window 1 --json
+swift run notion-tabs focus-tab --window 2 --tab 8 --json
+```
+
+## Focus Strategy Chain
+
+`focus-tab` executes in this order:
+
+1. `command-number` (`Command + 1...9`, when tab index is in range)
+2. `coordinate-click` (AX tab button candidate click)
+3. `command-cycle` (`Command+Shift+] / Command+Shift+[`) based on persisted index distance
+
+Final success is always validated by AX focused title.
+
+## Error Contract
+
+With `--json`, failures return structured error payload:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "WINDOW_NOT_FOUND",
+    "message": "Window not found: 99"
+  }
+}
+```
+
+Known codes:
+
+- `NOTION_NOT_RUNNING`
+- `STATE_UNAVAILABLE`
+- `WINDOW_NOT_FOUND`
+- `TAB_NOT_FOUND`
+- `WINDOW_MENU_UNAVAILABLE`
+- `FOCUSED_WINDOW_UNAVAILABLE`
+- `TAB_BUTTON_UNAVAILABLE`
+- `ACTION_FAILED`
+- `UNKNOWN_ERROR`
+
+## Docs
+
+- CLI contract: [docs/cli-contract.md](docs/cli-contract.md)
+- Priority/status: [docs/todo-priority.md](docs/todo-priority.md)
+- Shortcut modifier validation: [docs/validation-shortcut-modifier-20260426.md](docs/validation-shortcut-modifier-20260426.md)
+- Next work plan (UI phase): [docs/next-work-plan.md](docs/next-work-plan.md)
+
+## Legacy / Research Binaries
+
+- `notion-tabs-poc`: legacy PoC commands
+- `notion-tabs-v2`: validation/research runner
+
+These remain for investigation and regression checks, but product integration should target `notion-tabs --json`.
