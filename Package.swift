@@ -9,6 +9,7 @@ let package = Package(
     products: [
         .library(name: "NotionTabsCore", targets: ["NotionTabsCore"]),
         .executable(name: "notion-tabs", targets: ["notion-tabs"]),
+        .executable(name: "notion-tabs-ui", targets: ["notion-tabs-ui"]),
         .executable(name: "notion-tabs-poc", targets: ["NotionTabsPOC"]),
         .executable(name: "notion-tabs-v2", targets: ["NotionTabsV2"]),
     ],
@@ -21,6 +22,10 @@ let package = Package(
             name: "notion-tabs",
             dependencies: ["NotionTabsCore"],
             path: "Sources/notion-tabs"
+        ),
+        .executableTarget(
+            name: "notion-tabs-ui",
+            path: "Sources/notion-tabs-ui"
         ),
         .executableTarget(
             name: "NotionTabsPOC",

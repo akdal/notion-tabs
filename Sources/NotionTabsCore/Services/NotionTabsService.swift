@@ -57,6 +57,9 @@ public final class NotionTabsService {
     }
 
     private func focusWindow(_ target: PersistedWindow, app: NSRunningApplication, timeoutMS: Int) throws -> FocusResult {
+        _ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        usleep(120_000)
+
         let items = try windowMenu.read(pid: app.processIdentifier)
         guard let item = windowMenuItem(for: target, items: items) else {
             throw NotionTabsError.windowNotFound(target.activeTitle)
@@ -68,13 +71,18 @@ public final class NotionTabsService {
         }
 
         let focusedTitle = waitForFocusedTitle(pid: app.processIdentifier, title: target.activeTitle, timeoutMS: timeoutMS)
-        let success = normalize(focusedTitle ?? "") == normalize(target.activeTitle)
+        _ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        usleep(180_000)
+        let frontmost = waitForFrontmost(bundleID: "notion.id", timeoutMS: timeoutMS)
+        let success = normalize(focusedTitle ?? "") == normalize(target.activeTitle) && frontmost
         return FocusResult(
             success: success,
             targetTitle: target.activeTitle,
             focusedTitle: focusedTitle,
             strategy: "window-menu",
-            message: success ? "focused window: \(target.activeTitle)" : "window menu pressed, but focus verification failed"
+            message: success
+                ? "focused window: \(target.activeTitle)"
+                : "window menu pressed, but focus/frontmost verification failed"
         )
     }
 
@@ -226,6 +234,32 @@ public final class NotionTabsService {
                 return latest
             }
             usleep(50_000)
+        }
+    }
+
+    private func waitForFrontmost(bundleID: String, timeoutMS: Int) -> Bool {
+        let deadline = Date().addingTimeInterval(TimeInterval(timeoutMS) / 1000.0)
+        while true {
+            let current = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            if current == bundleID {
+                triggerFrontmostNudge(bundleID: bundleID)
+                return true
+            }
+            if Date() >= deadline {
+                return false
+            }
+            usleep(50_000)
+        }
+    }
+
+    private func triggerFrontmostNudge(bundleID: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-b", bundleID]
+        do {
+            try process.run()
+        } catch {
+            // Best-effort nudge only; do not fail focus action on this path.
         }
     }
 }

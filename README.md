@@ -32,6 +32,25 @@ swift run notion-tabs focus-window --window 1 --json
 swift run notion-tabs focus-tab --window 2 --tab 8 --json
 ```
 
+## Menu Bar UI
+
+```bash
+swift run notion-tabs-ui
+```
+
+The UI provides:
+
+- macOS menu bar entry using the default system menu style
+- window and tab list under the menu bar item
+- main window with search, auto-refresh, recent actions, and raw JSON debug output
+- actions backed by `notion-tabs --json`
+
+For packaged or non-SwiftPM execution, set `NOTION_TABS_BIN` to the `notion-tabs` binary path:
+
+```bash
+NOTION_TABS_BIN=/path/to/notion-tabs swift run notion-tabs-ui
+```
+
 ## Focus Strategy Chain
 
 `focus-tab` executes in this order:
@@ -41,6 +60,8 @@ swift run notion-tabs focus-tab --window 2 --tab 8 --json
 3. `command-cycle` (`Command+Shift+] / Command+Shift+[`) based on persisted index distance
 
 Final success is always validated by AX focused title.
+
+`focus-window` validates both AX focused title and Notion frontmost activation.
 
 ## Error Contract
 
