@@ -52,6 +52,17 @@ For packaged or non-SwiftPM execution, set `NOTION_TABS_BIN` to the `notion-tabs
 NOTION_TABS_BIN=/path/to/notion-tabs swift run notion-tabs-ui
 ```
 
+## Package App
+
+Build a standalone macOS app bundle:
+
+```bash
+./scripts/package-notion-tabs-ui.sh
+open "artifacts/Notion Tabs.app"
+```
+
+The packaged app bundles both `notion-tabs-ui` and `notion-tabs`, so the UI can resolve the CLI without `NOTION_TABS_BIN`.
+
 ## Focus Strategy Chain
 
 `focus-tab` executes in this order:

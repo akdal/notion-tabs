@@ -57,9 +57,6 @@ public final class NotionTabsService {
     }
 
     private func focusWindow(_ target: PersistedWindow, app: NSRunningApplication, timeoutMS: Int) throws -> FocusResult {
-        _ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-        usleep(120_000)
-
         let items = try windowMenu.read(pid: app.processIdentifier)
         guard let item = windowMenuItem(for: target, items: items) else {
             throw NotionTabsError.windowNotFound(target.activeTitle)
@@ -70,19 +67,17 @@ public final class NotionTabsService {
             throw NotionTabsError.actionFailed("Failed to press Window menu item: \(target.activeTitle)")
         }
 
-        let focusedTitle = waitForFocusedTitle(pid: app.processIdentifier, title: target.activeTitle, timeoutMS: timeoutMS)
-        _ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-        usleep(180_000)
+        _ = waitForFocusedTitle(pid: app.processIdentifier, title: item.title, timeoutMS: timeoutMS)
+        let activated = activateNotionForeground()
         let frontmost = waitForFrontmost(bundleID: "notion.id", timeoutMS: timeoutMS)
-        let success = normalize(focusedTitle ?? "") == normalize(target.activeTitle) && frontmost
+        let focusedTitle = waitForFocusedTitle(pid: app.processIdentifier, title: item.title, timeoutMS: min(timeoutMS, 1_000))
+        let success = activated && frontmost && normalize(focusedTitle ?? "") == normalize(item.title)
         return FocusResult(
             success: success,
-            targetTitle: target.activeTitle,
+            targetTitle: item.title,
             focusedTitle: focusedTitle,
             strategy: "window-menu",
-            message: success
-                ? "focused window: \(target.activeTitle)"
-                : "window menu pressed, but focus/frontmost verification failed"
+            message: success ? "focused window: \(item.title)" : "window menu pressed, but foreground/focus verification failed"
         )
     }
 
@@ -92,8 +87,19 @@ public final class NotionTabsService {
         let targetWindow = try resolveWindow(windowRef, in: state)
         let targetTab = try resolveTab(tabRef, in: targetWindow)
 
-        if !focusedWindowContainsAllTabs(pid: app.processIdentifier, targetWindow: targetWindow) {
-            _ = try focusWindow(targetWindow, app: app, timeoutMS: max(1_000, timeoutMS))
+        if !focusedTitleBelongsToWindow(pid: app.processIdentifier, targetWindow: targetWindow)
+            && !focusedWindowContainsAllTabs(pid: app.processIdentifier, targetWindow: targetWindow)
+        {
+            let windowFocus = try focusWindow(targetWindow, app: app, timeoutMS: max(1_000, timeoutMS))
+            guard windowFocus.success else {
+                return FocusResult(
+                    success: false,
+                    targetTitle: targetTab.title,
+                    focusedTitle: windowFocus.focusedTitle,
+                    strategy: windowFocus.strategy,
+                    message: "window focus failed before tab focus: \(windowFocus.message)"
+                )
+            }
         }
 
         guard let focusedWindow = focusedReader.focusedWindow(pid: app.processIdentifier) else {
@@ -183,6 +189,15 @@ public final class NotionTabsService {
         return targetWindow.tabs.allSatisfy { observedTitles.contains(normalize($0.title)) }
     }
 
+    private func focusedTitleBelongsToWindow(pid: pid_t, targetWindow: PersistedWindow) -> Bool {
+        titleBelongsToWindow(focusedReader.focusedTitle(pid: pid), targetWindow: targetWindow)
+    }
+
+    private func titleBelongsToWindow(_ title: String?, targetWindow: PersistedWindow) -> Bool {
+        guard let title else { return false }
+        return targetWindow.tabs.contains { normalize($0.title) == normalize(title) }
+    }
+
     private func cycleToTabByCommandCycle(
         targetWindow: PersistedWindow,
         targetTab: PersistedTab,
@@ -237,12 +252,23 @@ public final class NotionTabsService {
         }
     }
 
+    private func activateNotionForeground() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "tell application \"Notion\" to activate"]
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
     private func waitForFrontmost(bundleID: String, timeoutMS: Int) -> Bool {
         let deadline = Date().addingTimeInterval(TimeInterval(timeoutMS) / 1000.0)
         while true {
-            let current = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            if current == bundleID {
-                triggerFrontmostNudge(bundleID: bundleID)
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID {
                 return true
             }
             if Date() >= deadline {
@@ -252,14 +278,4 @@ public final class NotionTabsService {
         }
     }
 
-    private func triggerFrontmostNudge(bundleID: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-b", bundleID]
-        do {
-            try process.run()
-        } catch {
-            // Best-effort nudge only; do not fail focus action on this path.
-        }
-    }
 }

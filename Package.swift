@@ -25,6 +25,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "notion-tabs-ui",
+            dependencies: ["NotionTabsCore"],
             path: "Sources/notion-tabs-ui"
         ),
         .executableTarget(

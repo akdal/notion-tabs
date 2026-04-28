@@ -68,6 +68,10 @@ final class AXElement {
         return AXElement(unsafeBitCast(value, to: AXUIElement.self))
     }
 
+    func windows() -> [AXElement] {
+        elements(kAXWindowsAttribute as CFString)
+    }
+
     func actions() -> [String] {
         var names: CFArray?
         let status = AXUIElementCopyActionNames(raw, &names)

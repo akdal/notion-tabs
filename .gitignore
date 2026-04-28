@@ -1,4 +1,4 @@
 .build/
+artifacts/
 logs/
 .DS_Store
-
