@@ -1,11 +1,26 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 import Foundation
 import NotionTabsCore
 import SwiftUI
 
+// File-scope globals for Carbon hot key — @convention(c) closures cannot capture locals
+private var _menuHotKeyRef: EventHotKeyRef?
+private var _menuHotKeyTrigger: (() -> Void)?
+
+private func findStatusBarButton(in view: NSView?) -> NSStatusBarButton? {
+    guard let view = view else { return nil }
+    if let button = view as? NSStatusBarButton { return button }
+    for subview in view.subviews {
+        if let button = findStatusBarButton(in: subview) { return button }
+    }
+    return nil
+}
+
 @main
 struct NotionTabsUIApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var viewModel = AppViewModel()
     @Environment(\.openWindow) private var openWindow
 
@@ -17,9 +32,40 @@ struct NotionTabsUIApp: App {
         MenuBarExtra("Notion Tabs", systemImage: "square.stack.3d.up") {
             MenuBarMenuContent(viewModel: viewModel) {
                 openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
             }
         }
         .menuBarExtraStyle(.menu)
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        _menuHotKeyTrigger = {
+            DispatchQueue.main.async {
+                for window in NSApp.windows
+                where NSStringFromClass(type(of: window)) == "NSStatusBarWindow" {
+                    if let button = findStatusBarButton(in: window.contentView) {
+                        button.performClick(nil as AnyObject?)
+                        return
+                    }
+                }
+            }
+        }
+        var eventSpec = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: OSType(kEventHotKeyPressed)
+        )
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, _, _ in _menuHotKeyTrigger?(); return noErr },
+            1, &eventSpec,
+            nil as UnsafeMutableRawPointer?,
+            nil as UnsafeMutablePointer<EventHandlerRef?>?
+        )
+        let hotKeyID = EventHotKeyID(signature: OSType(0x4E544150), id: 1)
+        RegisterEventHotKey(45, UInt32(optionKey | shiftKey), hotKeyID,
+                            GetApplicationEventTarget(), 0, &_menuHotKeyRef)
     }
 }
 
@@ -450,6 +496,45 @@ struct MenuBarMenuContent: View {
 
     var body: some View {
         Group {
+            ForEach(Array(viewModel.windows.enumerated()), id: \.element.id) { offset, window in
+                Button {
+                    viewModel.focusWindow(window)
+                } label: {
+                    Label {
+                        Text("\(window.index) · \(window.persistedActiveTitle)")
+                    } icon: {
+                        if window.isAXFocused {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+                .disabled(!window.isActionable)
+
+                ForEach(window.tabs) { tab in
+                    Button {
+                        viewModel.focusTab(window: window, tab: tab)
+                    } label: {
+                        Label {
+                            Text("\(window.index)-\(tab.index) · \(tab.title)")
+                        } icon: {
+                            if tab.isAXFocused {
+                                Image(systemName: "checkmark")
+                            } else if tab.isPersistedActive {
+                                Image(systemName: "circle.fill")
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                    .disabled(!window.isActionable)
+                }
+
+                if offset < viewModel.windows.count - 1 {
+                    Divider()
+                }
+            }
+            if !viewModel.windows.isEmpty {
+                Divider()
+            }
             Text(viewModel.appStatus.menuSummary)
             Divider()
             Button("Refresh") { viewModel.refresh() }
@@ -465,20 +550,6 @@ struct MenuBarMenuContent: View {
             Text(viewModel.appStatus.notionRunning ? "Auto refresh active" : "Auto refresh paused: Notion off")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Divider()
-            ForEach(viewModel.windows) { window in
-                Menu("[\(window.index)] \(window.persistedActiveTitle)") {
-                    Button("Focus Window") { viewModel.focusWindow(window) }
-                        .disabled(!window.isActionable)
-                    Divider()
-                    ForEach(window.tabs) { tab in
-                        Button("[\(tab.index)] \(tab.title)") {
-                            viewModel.focusTab(window: window, tab: tab)
-                        }
-                        .disabled(!window.isActionable)
-                    }
-                }
-            }
             if let error = viewModel.errorMessage {
                 Divider()
                 Text(error)
