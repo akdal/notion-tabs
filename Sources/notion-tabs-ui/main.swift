@@ -3,6 +3,7 @@ import ApplicationServices
 import Carbon.HIToolbox
 import Foundation
 import NotionTabsCore
+import ServiceManagement
 import SwiftUI
 
 // File-scope globals for Carbon hot key — @convention(c) closures cannot capture locals
@@ -22,15 +23,16 @@ private func findStatusBarButton(in view: NSView?) -> NSStatusBarButton? {
 struct NotionTabsUIApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var viewModel = AppViewModel()
+    @ObservedObject private var preferences = Preferences.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         WindowGroup("Notion Tabs UI", id: "main") {
-            ContentView(viewModel: viewModel)
+            ContentView(viewModel: viewModel, preferences: preferences)
                 .frame(minWidth: 920, minHeight: 640)
         }
-        MenuBarExtra("Notion Tabs", systemImage: "square.stack.3d.up") {
-            MenuBarMenuContent(viewModel: viewModel) {
+        MenuBarExtra("Notion Tabs", systemImage: "rectangle.stack") {
+            MenuBarMenuContent(viewModel: viewModel, preferences: preferences) {
                 openWindow(id: "main")
                 NSApp.activate(ignoringOtherApps: true)
             }
@@ -40,6 +42,11 @@ struct NotionTabsUIApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.applicationIconImage = AppIcon.make()
+        Preferences.shared.applyDockPolicy()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         _menuHotKeyTrigger = {
             DispatchQueue.main.async {
@@ -66,6 +73,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hotKeyID = EventHotKeyID(signature: OSType(0x4E544150), id: 1)
         RegisterEventHotKey(45, UInt32(optionKey | shiftKey), hotKeyID,
                             GetApplicationEventTarget(), 0, &_menuHotKeyRef)
+    }
+}
+
+private enum AppIcon {
+    static func make() -> NSImage {
+        let size = NSSize(width: 1024, height: 1024)
+        return NSImage(size: size, flipped: false) { rect in
+            let cornerRadius: CGFloat = 224
+            let bgPath = NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
+            bgPath.addClip()
+
+            NSGradient(colors: [
+                NSColor(red: 0.98, green: 0.97, blue: 0.95, alpha: 1.0),
+                NSColor(red: 0.93, green: 0.91, blue: 0.87, alpha: 1.0),
+            ])?.draw(in: rect, angle: -90)
+
+            let cardW: CGFloat = 676
+            let cardH: CGFloat = 594
+            let cardCorner: CGFloat = 72
+            let frontCardY: CGFloat = 154
+            let offsetStep: CGFloat = 46
+            let widthInsetStep: CGFloat = 41
+            let frontCardX: CGFloat = (1024 - cardW) / 2
+
+            let card3 = NSRect(
+                x: frontCardX + widthInsetStep,
+                y: frontCardY + offsetStep * 2,
+                width: cardW - widthInsetStep * 2,
+                height: cardH
+            )
+            NSColor(red: 0.58, green: 0.55, blue: 0.49, alpha: 1.0).setFill()
+            NSBezierPath(roundedRect: card3, xRadius: cardCorner, yRadius: cardCorner).fill()
+
+            let card2 = NSRect(
+                x: frontCardX + widthInsetStep / 2,
+                y: frontCardY + offsetStep,
+                width: cardW - widthInsetStep,
+                height: cardH
+            )
+            NSColor(red: 0.36, green: 0.34, blue: 0.30, alpha: 1.0).setFill()
+            NSBezierPath(roundedRect: card2, xRadius: cardCorner, yRadius: cardCorner).fill()
+
+            let card1 = NSRect(x: frontCardX, y: frontCardY, width: cardW, height: cardH)
+            NSColor(red: 0.18, green: 0.17, blue: 0.15, alpha: 1.0).setFill()
+            NSBezierPath(roundedRect: card1, xRadius: cardCorner, yRadius: cardCorner).fill()
+
+            let nFontSize: CGFloat = 460
+            let nFont = NSFont(name: "Georgia-Bold", size: nFontSize)
+                ?? NSFont(name: "Times-Bold", size: nFontSize)
+                ?? NSFont.systemFont(ofSize: nFontSize, weight: .black)
+            let nAttrs: [NSAttributedString.Key: Any] = [
+                .font: nFont,
+                .foregroundColor: NSColor(red: 0.98, green: 0.97, blue: 0.95, alpha: 1.0),
+            ]
+            let nString = NSAttributedString(string: "N", attributes: nAttrs)
+            let nSize = nString.size()
+            nString.draw(at: NSPoint(
+                x: card1.midX - nSize.width / 2,
+                y: card1.midY - nSize.height / 2 - 30
+            ))
+            return true
+        }
     }
 }
 
@@ -304,8 +373,85 @@ final class AppViewModel: ObservableObject {
     }
 }
 
+@MainActor
+final class Preferences: ObservableObject {
+    static let shared = Preferences()
+
+    private static let launchAtLoginKey = "notionTabs.launchAtLogin"
+    private static let hideDockIconKey = "notionTabs.hideDockIcon"
+
+    @Published var launchAtLogin: Bool {
+        didSet {
+            guard !isSyncing else { return }
+            UserDefaults.standard.set(launchAtLogin, forKey: Self.launchAtLoginKey)
+            applyLaunchAtLogin()
+        }
+    }
+
+    @Published var hideDockIcon: Bool {
+        didSet {
+            UserDefaults.standard.set(hideDockIcon, forKey: Self.hideDockIconKey)
+            applyDockPolicy()
+        }
+    }
+
+    @Published private(set) var loginItemStatus: String = "unknown"
+
+    private var isSyncing = false
+
+    private init() {
+        self.launchAtLogin = UserDefaults.standard.bool(forKey: Self.launchAtLoginKey)
+        self.hideDockIcon = UserDefaults.standard.bool(forKey: Self.hideDockIconKey)
+        refreshLoginItemStatus()
+    }
+
+    func applyDockPolicy() {
+        let policy: NSApplication.ActivationPolicy = hideDockIcon ? .accessory : .regular
+        NSApp.setActivationPolicy(policy)
+        UILogger.shared.write("dock policy=\(hideDockIcon ? "accessory" : "regular")")
+    }
+
+    func applyLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if launchAtLogin {
+                try service.register()
+            } else {
+                try service.unregister()
+            }
+            UILogger.shared.write("login-item set enabled=\(launchAtLogin) status=\(describe(service.status))")
+        } catch {
+            UILogger.shared.write("login-item error enabled=\(launchAtLogin) error='\(error.localizedDescription)'")
+        }
+        refreshLoginItemStatus()
+    }
+
+    func refreshLoginItemStatus() {
+        let status = SMAppService.mainApp.status
+        loginItemStatus = describe(status)
+        let actuallyEnabled = (status == .enabled)
+        if launchAtLogin != actuallyEnabled {
+            isSyncing = true
+            launchAtLogin = actuallyEnabled
+            UserDefaults.standard.set(actuallyEnabled, forKey: Self.launchAtLoginKey)
+            isSyncing = false
+        }
+    }
+
+    private func describe(_ status: SMAppService.Status) -> String {
+        switch status {
+        case .enabled: return "enabled"
+        case .notRegistered: return "not registered"
+        case .notFound: return "not found (run from .app bundle)"
+        case .requiresApproval: return "needs approval in System Settings"
+        @unknown default: return "unknown"
+        }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var preferences: Preferences
 
     private var filteredWindows: [FilteredWindow] {
         let query = viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -346,6 +492,18 @@ struct ContentView: View {
 
             StatusBar(status: viewModel.appStatus) {
                 viewModel.requestAccessibilityPermission()
+            }
+
+            GroupBox("Preferences") {
+                HStack(spacing: 16) {
+                    Toggle("Launch at login", isOn: $preferences.launchAtLogin)
+                    Toggle("Hide dock icon", isOn: $preferences.hideDockIcon)
+                    Spacer()
+                    Text("Login item: \(preferences.loginItemStatus)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
             }
 
             HStack {
@@ -492,6 +650,7 @@ struct ActionHistoryRow: View {
 
 struct MenuBarMenuContent: View {
     @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var preferences: Preferences
     let onOpenMainWindow: () -> Void
 
     var body: some View {
@@ -555,11 +714,18 @@ struct MenuBarMenuContent: View {
                 Text(error)
             }
             Divider()
+            Toggle("Launch at Login", isOn: $preferences.launchAtLogin)
+            Toggle("Hide Dock Icon", isOn: $preferences.hideDockIcon)
+            Text("Login item: \(preferences.loginItemStatus)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Divider()
             Button("Quit") { NSApp.terminate(nil) }
         }
         .onAppear {
             viewModel.startLifecycleObservers()
             viewModel.updateRuntimeStatus()
+            preferences.refreshLoginItemStatus()
             if viewModel.windows.isEmpty {
                 viewModel.refresh()
             }

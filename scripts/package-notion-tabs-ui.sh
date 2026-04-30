@@ -16,6 +16,8 @@ swift build -c release
 cp "$BUILD_DIR/notion-tabs-ui" "$MACOS_DIR/notion-tabs-ui"
 cp "$BUILD_DIR/notion-tabs" "$MACOS_DIR/notion-tabs"
 
+swift "$ROOT_DIR/scripts/generate-app-icon.swift" "$RESOURCES_DIR/AppIcon.icns"
+
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -25,6 +27,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>notion-tabs-ui</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.huey.notiontabs.ui</string>
     <key>CFBundleInfoDictionaryVersion</key>
