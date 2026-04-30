@@ -32,7 +32,7 @@ struct NotionTabsUIApp: App {
                 .frame(minWidth: 920, minHeight: 640)
         }
         MenuBarExtra("Notion Tabs", systemImage: "rectangle.stack") {
-            MenuBarMenuContent(viewModel: viewModel, preferences: preferences) {
+            MenuBarMenuContent(viewModel: viewModel) {
                 openWindow(id: "main")
                 NSApp.activate(ignoringOtherApps: true)
             }
@@ -650,7 +650,6 @@ struct ActionHistoryRow: View {
 
 struct MenuBarMenuContent: View {
     @ObservedObject var viewModel: AppViewModel
-    @ObservedObject var preferences: Preferences
     let onOpenMainWindow: () -> Void
 
     var body: some View {
@@ -694,38 +693,18 @@ struct MenuBarMenuContent: View {
             if !viewModel.windows.isEmpty {
                 Divider()
             }
-            Text(viewModel.appStatus.menuSummary)
-            Divider()
             Button("Refresh") { viewModel.refresh() }
             Button("Open Main Window") { onOpenMainWindow() }
-            Button("Open Logs Folder") { viewModel.openLogsFolder() }
-            if !viewModel.appStatus.accessibilityTrusted {
-                Button("Grant Accessibility") { viewModel.requestAccessibilityPermission() }
-            }
             Toggle("Auto Refresh (2s)", isOn: Binding(
                 get: { viewModel.autoRefreshEnabled },
                 set: { viewModel.setAutoRefresh(enabled: $0) }
             ))
-            Text(viewModel.appStatus.notionRunning ? "Auto refresh active" : "Auto refresh paused: Notion off")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if let error = viewModel.errorMessage {
-                Divider()
-                Text(error)
-            }
-            Divider()
-            Toggle("Launch at Login", isOn: $preferences.launchAtLogin)
-            Toggle("Hide Dock Icon", isOn: $preferences.hideDockIcon)
-            Text("Login item: \(preferences.loginItemStatus)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
             Divider()
             Button("Quit") { NSApp.terminate(nil) }
         }
         .onAppear {
             viewModel.startLifecycleObservers()
             viewModel.updateRuntimeStatus()
-            preferences.refreshLoginItemStatus()
             if viewModel.windows.isEmpty {
                 viewModel.refresh()
             }
